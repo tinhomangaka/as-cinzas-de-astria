@@ -1,1 +1,92 @@
+name: Build Android APK — As Cinzas de Astria v0.4
 
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: windows-latest
+
+    steps:
+      - name: Baixar projeto Astria
+        uses: actions/checkout@v4
+
+      - name: Baixar raylib
+        uses: actions/checkout@v4
+        with:
+          repository: raysan5/raylib
+          path: raylib
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Configurar Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r25
+          add-to-path: false
+
+      - name: Instalar componentes Android
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platform-tools" "platforms;android-29" "build-tools;29.0.3"
+
+      - name: Preparar template Android do raylib
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/raysan5/raylib-game-template.git template
+          rm -f template/src/*.c
+          cp src/astria.c template/src/raylib_game.c
+
+      - name: Compilar biblioteca raylib para ARM64
+        shell: cmd
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          cd raylib\src
+          mingw32-make PLATFORM=PLATFORM_ANDROID ANDROID_ARCH=arm64 ANDROID_API_VERSION=29 ANDROID_NDK=%ANDROID_NDK_HOME% RAYLIB_LIBTYPE=STATIC
+
+      - name: Gerar APK
+        shell: cmd
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          cd template\src
+          set JAVA_HOME=%JAVA_HOME_17_X64%
+          set ANDROID_HOME=%ANDROID_SDK_ROOT%
+          mingw32-make -f Makefile.Android PROJECT_NAME=astria PROJECT_SOURCE_FILES=raylib_game.c RAYLIB_PATH=..\..\raylib ANDROID_NDK=%ANDROID_NDK_HOME% ANDROID_ARCH=ARM64 ANDROID_API_VERSION=29 APP_PRODUCT_NAME=AsCinzasDeAstria APP_VERSION_CODE=4 APP_VERSION_NAME=0.4
+
+      - name: Localizar APK
+        shell: pwsh
+        run: |
+          $apk = Get-ChildItem -Path . -Filter *.apk -Recurse |
+            Where-Object { $_.FullName -notmatch '\\obj\\|\\build\\' } |
+            Select-Object -First 1
+
+          if (-not $apk) {
+            Write-Error "APK não encontrado."
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $apk.FullName "dist/As-Cinzas-de-Astria-v0.4.apk"
+
+      - name: Disponibilizar APK para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: astria-v04-apk
+          path: dist/As-Cinzas-de-Astria-v0.4.apk
+          if-no-files-found: error
